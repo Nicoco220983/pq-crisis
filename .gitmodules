@@ -1,0 +1,3 @@
+[submodule "ext/kontra-utils"]
+	path = ext/kontra-utils
+	url = https://github.com/Nicoco220983/kontra-utils
