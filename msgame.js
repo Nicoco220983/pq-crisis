@@ -1,4 +1,4 @@
-const { abs, floor, ceil, min, max, sqrt, random: rand } = Math
+const { abs, floor, ceil, min, max, sqrt, random: rand, cos, sin, atan2 } = Math
 const { log } = console
 
 // utils
@@ -134,11 +134,11 @@ class Elem {
         this.trigger("remove")
     }
 
-    every(key, period, fun) {
-        const lastTime = this[key] || 0
-        if (lastTime <= this.time) {
+    every(timeKey, period, fun) {
+        const lastTime = this[timeKey] || 0
+        if (this.time >= lastTime) {
+            this[timeKey] = lastTime + _mayCall(period)
             fun()
-            this[key] += _mayCall(period)
         }
     }
 }
@@ -151,9 +151,38 @@ export class Game extends Elem {
         this.canvas = canvas
         this.width = canvas.width
         this.height = canvas.height
-        this.fps = 60
         this.paused = false
         Object.assign(this, kwargs)
+        // focus
+        document.addEventListener("focus", () => this.trigger("focus"))
+        document.addEventListener("blur", () => this.trigger("blur"))
+        // pointer
+        this.pointer = new Elem({ isDown: false })
+        let lastPointerClickTime = null
+        this.addPointerDownListener(pos => {
+            this.pointer.x = pos.x
+            this.pointer.y = pos.y
+            this.pointer.isDown = true
+            this.pointer.trigger("down")
+            if(lastPointerClickTime && (this.time - lastPointerClickTime) < this.dblClickDurarion) {
+                this.trigger("dblclick", this.pointer)
+                this.pointer.trigger("dblclick")
+                lastPointerClickTime = null
+            } else {
+                this.trigger("click", this.pointer)
+                this.pointer.trigger("click")
+                lastPointerClickTime = this.time
+            }
+        })
+        this.addPointerUpListener(() => {
+            this.pointer.isDown = false
+            this.pointer.trigger("up")
+        })
+        this.addPointerMoveListener(pos => {
+            this.pointer.x = pos.x
+            this.pointer.y = pos.y
+            this.pointer.trigger("move")
+        })
     }
     async initLoop() {
         await waitLoads()
@@ -161,10 +190,10 @@ export class Game extends Elem {
         const timeFrame = 1 / this.fps
         let dt = timeFrame
         while (true) {
-            const now = performance.now()
+            const now = Date.now()
             if (!this.paused) this.update(dt)
             this.draw(_ctx(this.canvas), dt)
-            const elapsed = (performance.now() - now) / 1000
+            const elapsed = (Date.now() - now) / 1000
             const toWait = max(0, timeFrame - elapsed)
             await _wait(toWait * 1000)
             dt = elapsed + toWait
@@ -184,22 +213,22 @@ export class Game extends Elem {
     // pointer
 
     addPointerDownListener(next) {
-        this._addPointerListerner("mousedown", "touchstart", next)
+        this._addPointerListerner(this.canvas, "mousedown", "touchstart", next)
     }
 
     addPointerUpListener(next) {
-        this._addPointerListerner("mouseup", "touchend", next)
+        this._addPointerListerner(document.body, "mouseup", "touchend", next)
     }
 
     addPointerMoveListener(next) {
-        this._addPointerListerner("mousemove", "touchmove", next)
+        this._addPointerListerner(this.canvas, "mousemove", "touchmove", next)
     }
 
-    _addPointerListerner(mousekey, touchkey, next) {
-        this.canvas.addEventListener(mousekey, evt => {
+    _addPointerListerner(el, mousekey, touchkey, next) {
+        el.addEventListener(mousekey, evt => {
             next(this._getEvtPos(evt))
         }, false)
-        this.canvas.addEventListener(touchkey, evt => {
+        el.addEventListener(touchkey, evt => {
             evt.preventDefault()
             next(this._getEvtPos(evt.changedTouches[0]))
         }, false)
@@ -215,6 +244,10 @@ export class Game extends Elem {
         }
     }
 }
+Object.assign(Game.prototype, {
+    fps: 60,
+    dblClickDurarion: .3
+})
 
 // Scene
 
@@ -224,9 +257,6 @@ export class Scene extends Elem {
         this.game = game
         this.width = game.width
         this.height = game.height
-        this.x = 0
-        this.y = 0
-        this.color = "white"
         Object.assign(this, kwargs)
         this.canvas = _createCan(this.width, this.height)
     }
@@ -236,11 +266,18 @@ export class Scene extends Elem {
     }
     nextImg(dt) {
         const ctx = this.canvas.getContext("2d")
-        ctx.fillStyle = this.color
-        ctx.fillRect(0, 0, this.width, this.height)
+        if(this.color){
+            ctx.fillStyle = this.color
+            ctx.fillRect(0, 0, this.width, this.height)
+        }
         return this.canvas
     }
 }
+Object.assign(Scene.prototype, {
+    x: 0,
+    y: 0,
+    color: "white"
+})
 
 // Sprite
 
@@ -271,14 +308,6 @@ export class Sprite extends Elem {
     constructor(scn, kwargs) {
         super()
         this.scene = scn
-        this.x = 0
-        this.y = 0
-        this.width = 50
-        this.height = 50
-        this.anchorX = 0
-        this.anchorY = 0
-        this.anim = "black"
-        this.animTime = 0
         Object.assign(this, kwargs)
     }
 
@@ -307,19 +336,22 @@ export class Sprite extends Elem {
         if (typeof anim == "string") anim = this.getDefaultAnim()
         const img = anim.getImg(this.animTime)
         if (!img) return
-        if(this.autoTransformImg || img!==this.lastImg){
-            this.lastImg = img
-            const transArgs = this.scaleImg(img)
-            if (this.animFlipX) transArgs.flipX = true
-            if (this.animFlipY) transArgs.flipY = true
-            this.lastTransImg = anim.transformImg(img, transArgs)
-        }
-        return this.lastTransImg
+        const transArgs = this.getImgTransArgs(img)
+        return anim.transformImg(img, transArgs)
+    }
+
+    getImgTransArgs(img) {
+        const args = this.getImgScaleArgs(img)
+        if (this.animFlipX) args.flipX = true
+        if (this.animFlipY) args.flipY = true
+        if (this.angle) args.angle = this.angle
+        return args
+        //if(this.angle) transArgs = this.getImgAngleArgs(img)
     }
 
     getDefaultAnim() {
         const color = this.anim
-        return _getCached(this.constructor, `dImg:${color}`, () => {
+        return _getCached(this.__proto__, `dImg:${color}`, () => {
             const size = 10
             const can = _createCan(size, size), ctx = _ctx(can)
             ctx.fillStyle = color
@@ -329,8 +361,18 @@ export class Sprite extends Elem {
     }
 }
 
-Sprite.prototype.autoTransformImg = true
-Sprite.prototype.scaleImg = strechImg
+Object.assign(Sprite.prototype, {
+    x: 0,
+    y: 0,
+    width: 50,
+    height: 50,
+    angle: 0,
+    anchorX: 0,
+    anchorY: 0,
+    anim: "black",
+    animTime: 0,
+    getImgScaleArgs: strechImg
+})
 
 // Loads
 
@@ -340,7 +382,7 @@ function _waitLoad(load) {
     return new Promise((ok, ko) => {
         const __waitLoad = () => {
             if (load.loaded) return ok()
-            if (load.error) return ko(load.error)
+            if (load.loadError) return ko(load.loadError)
             setTimeout(__waitLoad, 10)
         }
         __waitLoad()
@@ -400,12 +442,21 @@ export class Anim {
     }
     transformImg(img, kwargs) {
         return _getCached(img, JSON.stringify(kwargs), () => {
-            const width = kwargs.width || img.width
-            const height = kwargs.height || img.height
-            const can = _createCan(width, height), ctx = _ctx(can)
-            ctx.translate(kwargs.flipX ? width : 0, kwargs.flipY ? height : 0)
+            let width = kwargs.width || img.width
+            let height = kwargs.height || img.height
+            const angle = kwargs.angle || 0
+            let awidth = width, aheight = height
+            if(angle) {
+                awidth = abs(cos(angle)) * width + abs(sin(angle)) * height
+                aheight = abs(cos(angle)) * height + abs(sin(angle)) * width
+            }
+            const can = _createCan(awidth, aheight), ctx = _ctx(can)
+            ctx.translate(awidth/2, aheight/2)
             ctx.scale(kwargs.flipX ? -1 : 1, kwargs.flipY ? -1 : 1)
-            ctx.drawImage(img, 0, 0, width, height)
+            ctx.rotate(angle)
+            ctx.drawImage(img, -width/2, -height/2, width, height)
+            can.dx = width - awidth
+            can.dy = height - aheight
             return can
         })
     }
@@ -420,7 +471,7 @@ export class Img extends Image {
         Object.assign(this, kwargs)
         Loads.push(this)
         this.onload = () => this.loaded = true
-        this.onerror = () => this.error = `load error: ${src}`
+        this.onerror = () => this.loadError = `load error: ${src}`
     }
 }
 
@@ -439,7 +490,7 @@ export class Aud extends Audio {
         Audios.push(this)
         Loads.push(this)
         this.onloadeddata = () => this.loaded = true
-        this.onerror = () => this.error = `load error: ${src}`
+        this.onerror = () => this.loadError = `load error: ${src}`
     }
     playable() {
         return this.currentTime == 0 || this.ended
@@ -508,7 +559,23 @@ export function range(a, b) {
 
 // dynamics
 
-export function accTo(spd, tgtSpd, acc, dec, dt) {
+export function spdToPos2d(obj, tgt, spd, dt) {
+    const _spd = spd * dt
+    const distX = obj.x - tgt.x, distY = obj.y - tgt.y
+    const dist = sqrt(distX * distX + distY * distY)
+    if (dist < _spd) {
+        obj.x = tgt.x
+        obj.y = tgt.y
+        return true
+    } else {
+        const angle = atan2(distY, distX)
+        obj.x -= _spd * cos(angle)
+        obj.y -= _spd * sin(angle)
+        return false
+    }
+}
+
+export function accToSpd(spd, tgtSpd, acc, dec, dt) {
     if (spd == tgtSpd) return spd
     const a = (spd == 0 || spd * tgtSpd > 0) ? (acc * dt) : (dec * dt)
     if (tgtSpd > 0 || (tgtSpd == 0 && spd < 0)) {
@@ -518,10 +585,10 @@ export function accTo(spd, tgtSpd, acc, dec, dt) {
     }
 }
 
-export function moveTo(pos, tgt, spd, spdMax, acc, dec, dt) {
+export function accToPos(pos, tgt, spd, spdMax, acc, dec, dt) {
     const dist = tgt - pos, adist = abs(dist), sdist = sign(dist)
     const tgtSpd = bound(sdist * sqrt(adist * dec), -spdMax, spdMax)
-    return accTo(spd, tgtSpd, acc, dec, dt)
+    return accToSpd(spd, tgtSpd, acc, dec, dt)
 }
 
 // collision
@@ -572,7 +639,7 @@ export class Text extends Sprite {
         if (val !== this.prevValue) {
             this.prevValue = val
             const vals = val.split('\n')
-            const can = this.lastImg = _createCan(1, 1), ctx = _ctx(can)
+            const can = this.img = _createCan(1, 1), ctx = _ctx(can)
             const font = ctx.font = this.font || "20px Georgia"
             const lineHeight = this.lineHeight || parseInt(ctx.font)
             let width = 0, height = 0
@@ -592,9 +659,11 @@ export class Text extends Sprite {
             for (let i in vals)
                 ctx.fillText(vals[i], x, i * lineHeight)
         }
-        return this.lastImg
+        return this.img
     }
 }
+
+Text.prototype.scaleImg = false
 
 // flash
 

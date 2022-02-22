@@ -18,15 +18,11 @@ class PQGame extends Game {
         document.addEventListener("focus", () => this.pause(false))
         document.addEventListener("blur", () => this.pause(true))
         this.addPointerDownListener(pos => {
-            this.pointer = pos
-            this.pointerDown = true
             this.addVolumeBut()
             this.scene.trigger("click", pos)
             if (MSG.collide(this.volumeBut, pos))
                 this.volumeBut.trigger("click")
         })
-        this.addPointerUpListener(() => this.pointerDown = false)
-        this.addPointerMoveListener(pos => this.pointer = pos)
     }
     start() {
         this.scene = new PQScene(this)
@@ -275,8 +271,8 @@ class Notif extends Text {
         if (this.time > .5) this.remove()
     }
 }
-    Notif.prototype.anchorX = .5
-    Notif.prototype.anchorY = 1
+Notif.prototype.anchorX = .5
+Notif.prototype.anchorY = 1
 
 // level
 
@@ -451,8 +447,8 @@ PQScene.starters.push(scn => {
 PQScene.ongoers.push(scn => {
     scn.hero.anim = HeroAnims.run
     scn.hero.on("update", function (dt) {
-        if (scn.game.pointerDown) {
-            this.dx = MSG.moveTo(this.x, scn.game.pointer.x, this.dx, SPDMAX, ACC, DEC, dt)
+        if (scn.game.pointer.isDown) {
+            this.dx = MSG.accToPos(this.x, scn.game.pointer.x, this.dx, SPDMAX, ACC, DEC, dt)
             if (abs(this.dx) < abs(this.prevDx) && abs(this.dx) > 250) {
                 this.anim = HeroAnims.slide
                 this.animFlipX = (this.dx <= 0)
@@ -462,7 +458,7 @@ PQScene.ongoers.push(scn => {
                 this.animFlipX = false
             }
         } else {
-            this.dx = MSG.accTo(this.dx, 0, ACC, DEC, dt)
+            this.dx = MSG.accToSpd(this.dx, 0, ACC, DEC, dt)
             this.anim = HeroAnims.run
         }
         this.prevDx = this.dx
